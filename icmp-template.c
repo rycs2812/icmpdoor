@@ -12,7 +12,6 @@ Program
 
 #include <stdio.h>
 #include <signal.h>
-#include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -216,6 +215,7 @@ unsigned short icmp_checksum(unsigned short *addr, int len)
     sum = (sum >> 16) + (sum & 0xffff);
     sum += (sum >> 16);
     answer = ~sum;
+    printf("ICMP checksum:%hu\n", answer);
     return answer;
 }
 
